@@ -209,6 +209,11 @@ const sanitize = (num: number) => Math.round(num);
 
 // 将 convertElement 函数改为异步函数
 async function convertElement(element: Element): Promise<NodeType | null> {
+  // 直接排除 title 标签
+  if (element.tagName === 'TITLE') {
+    return null;
+  }
+
   const elementPath = getElementPath(element);
   if (processedElements.has(elementPath)) {
     return null;
@@ -378,6 +383,11 @@ async function convertElement(element: Element): Promise<NodeType | null> {
 
   // 处理文本内容
   const processTextNodes = (node: Node) => {
+    // 检查 node 是否为 Element 类型，再调用 closest 方法
+    if (node instanceof Element && node.closest('title')) {
+      return;
+    }
+
     if (node.nodeType === Node.TEXT_NODE) {
       const textNode = node as Text;
       if (processedTextNodes.has(textNode)) {
@@ -423,7 +433,7 @@ async function convertElement(element: Element): Promise<NodeType | null> {
     } else if (node.nodeType === Node.ELEMENT_NODE) {
       const childElement = node as Element;
       // 跳过不需要处理的元素类型
-      const skipTags = ['SCRIPT', 'STYLE', 'META', 'LINK', 'SVG'];
+      const skipTags = ['SCRIPT', 'STYLE', 'META', 'LINK', 'SVG', 'TITLE'];
       if (!skipTags.includes(childElement.tagName)) {
         childElement.childNodes.forEach(processTextNodes);
       }
@@ -436,9 +446,9 @@ async function convertElement(element: Element): Promise<NodeType | null> {
     return baseNode;
   }
 
-  // 处理子元素
+  // 处理子元素时，排除 title 相关内容
   if (element.children.length > 0) {
-    const childrenPromises = Array.from(element.children).map(convertElement);
+    const childrenPromises = Array.from(element.children).filter(child => child.tagName!== 'TITLE').map(convertElement);
     const children = await Promise.all(childrenPromises);
     return {
       ...baseNode,
@@ -458,7 +468,7 @@ async function convertElement(element: Element): Promise<NodeType | null> {
     const filteredElements = Array.from(document.querySelectorAll('*')).filter(node => {
       const tag = node.tagName;
       const isHidden = node.hasAttribute('hidden') || node.getAttribute('aria-hidden') === 'true';
-      const isValidTag =!['SCRIPT', 'STYLE', 'META', 'LINK', 'SVG'].includes(tag);
+      const isValidTag =!['SCRIPT', 'STYLE', 'META', 'LINK', 'SVG', 'TITLE'].includes(tag);
 
       const style = window.getComputedStyle(node);
       const isVisible = style.display!== 'none' &&
@@ -466,10 +476,22 @@ async function convertElement(element: Element): Promise<NodeType | null> {
         parseFloat(style.opacity) > 0 &&
         (node.getClientRects().length > 0);
 
-      // 检查节点自身或其子节点是否有文本内容
-      const hasTextContent = node.textContent?.trim() || Array.from(node.childNodes).some(child => child.textContent?.trim());
+      const hasTextContent = (() => {
+        if (node.closest('title')) {
+          return false;
+        }
+        return node.textContent?.trim() || 
+          Array.from(node.childNodes).some(child => {
+            if (child.parentElement?.closest('title')) {
+              return false;
+            }
+            return child.textContent?.trim();
+          });
+      })();
 
-      return isValidTag && isVisible &&!isHidden && hasTextContent;
+      const isBackgroundImage = getBackgroundImageUrl(style)!== null;
+
+      return isValidTag && isVisible &&!isHidden && (hasTextContent || isBackgroundImage);
     });
 
     const convertPromises = filteredElements.map(convertElement);
